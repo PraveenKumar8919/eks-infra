@@ -1,0 +1,44 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  trivy-secrets:
+    name: Secret Scan (Trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy secret scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          format: table
+
+  trivy-iac:
+    name: IaC Misconfiguration Scan (Trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy IaC scan (Terraform)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          format: table
