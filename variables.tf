@@ -6,6 +6,11 @@ variable "cluster_name" {
   default = "eks-test-cluster"
 }
 
+variable "domain_name" {
+  description = "Root domain name managed in Route 53 (e.g. devopswithpraveen.online)"
+  default     = "devopswithpraveen.online"
+}
+
 variable "loki_s3_bucket" {
   description = "S3 bucket name for Loki log storage"
 }

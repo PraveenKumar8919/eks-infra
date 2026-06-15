@@ -29,9 +29,17 @@ module "eks" {
       desired_size = 2
 
       labels = {
-        role            = "spot-worker"
-        lifecycle       = "spot"
+        role      = "spot-worker"
+        lifecycle = "spot"
       }
+    }
+  }
+
+  cluster_addons = {
+    # Provides storage provisioner — required for Prometheus PersistentVolumeClaims
+    aws-ebs-csi-driver = {
+      service_account_role_arn = aws_iam_role.ebs_csi.arn
+      most_recent              = true
     }
   }
 
