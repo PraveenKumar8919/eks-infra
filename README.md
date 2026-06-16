@@ -10,16 +10,20 @@ Application and Helm deployments live in [eks-ansible](https://github.com/Pravee
 
 ```
 AWS
-├── EKS Cluster (Auto Mode)         ← managed control plane, AWS handles nodes
-├── S3 Bucket                       ← Loki log storage
-└── IAM Role (IRSA)                 ← lets Loki pod write to S3 without access keys
+├── EKS Cluster (Spot managed node group)   ← t3.xlarge/m5.xlarge Spot instances
+├── ACM Certificate                          ← wildcard *.devopswithpraveen.online
+├── ALB Controller IAM Role (IRSA)          ← lets ALB controller create load balancers
+├── ExternalDNS IAM Role (IRSA)             ← lets ExternalDNS update Route 53 records
+├── EBS CSI Driver IAM Role (IRSA)          ← lets EBS CSI driver create volumes
+├── Loki IAM Role (IRSA)                    ← lets Loki write logs to S3
+└── S3 Bucket                               ← Loki log storage
 ```
 
-### Why EKS Auto Mode?
-No node groups to manage. AWS automatically provisions and scales compute based on what your pods need. Ideal for a test/learning cluster.
+### Why Spot instances?
+Spot instances cost 60–90% less than On-Demand. For a test/learning cluster this is ideal. The node group uses multiple instance types (`t3.xlarge`, `t3a.xlarge`, `m5.xlarge`, `m5a.xlarge`) so if one Spot pool runs out, AWS falls back to another.
 
 ### Why IRSA (IAM Roles for Service Accounts)?
-Instead of putting AWS credentials inside a Kubernetes Secret, IRSA lets a pod assume an IAM role directly using Kubernetes identity. Loki uses this to read/write its S3 bucket securely.
+Instead of putting AWS credentials inside a Kubernetes Secret, IRSA lets a pod assume an IAM role directly using Kubernetes identity. No credentials ever touch the cluster.
 
 ---
 
@@ -30,7 +34,8 @@ Instead of putting AWS credentials inside a Kubernetes Secret, IRSA lets a pod a
 | [Terraform >= 1.10](https://developer.hashicorp.com/terraform/install) | Infrastructure provisioning |
 | [AWS CLI](https://aws.amazon.com/cli/) | AWS authentication |
 | An S3 bucket for Terraform state | Remote state storage |
-| A VPC with at least 2 subnets in different AZs | EKS networking |
+| A VPC with at least 2 public subnets in different AZs | EKS networking |
+| `devopswithpraveen.online` managed in Route 53 | DNS for subdomain creation |
 
 ---
 
@@ -38,14 +43,23 @@ Instead of putting AWS credentials inside a Kubernetes Secret, IRSA lets a pod a
 
 ```
 eks-infra/
-├── .github/workflows/infra.yml   # GitHub Actions — runs terraform apply on push
-├── main.tf                        # EKS cluster definition
-├── iam.tf                         # IRSA role for Loki → S3 access
-├── s3.tf                          # S3 bucket for Loki log storage
-├── provider.tf                    # AWS provider + S3 backend config
-├── variables.tf                   # Input variables
-├── outputs.tf                     # Outputs consumed by eks-ansible
-├── terraform.tfvars.example       # Template — copy to terraform.tfvars for local use
+├── .github/
+│   └── workflows/
+│       ├── infra.yml              # Terraform plan + apply on push to main
+│       └── security-scan.yml      # Trivy secret + IaC misconfiguration scan
+├── policies/
+│   └── alb-controller-policy.json # Official ALB controller IAM policy
+├── main.tf                         # EKS cluster + Spot node group + EBS CSI addon
+├── provider.tf                     # AWS provider + S3 backend (no hardcoded bucket)
+├── variables.tf                    # Input variables
+├── outputs.tf                      # Outputs consumed by eks-ansible via S3 state
+├── iam.tf                          # IRSA role for Loki → S3
+├── ebs-csi-iam.tf                  # IRSA role for EBS CSI driver
+├── acm.tf                          # ACM wildcard cert + Route 53 DNS validation
+├── alb-iam.tf                      # IRSA role for AWS Load Balancer Controller
+├── externaldns-iam.tf              # IRSA role for ExternalDNS
+├── s3.tf                           # S3 bucket for Loki log storage
+├── terraform.tfvars.example        # Template — copy to terraform.tfvars for local use
 └── .gitignore
 ```
 
@@ -62,7 +76,17 @@ cd eks-infra
 **2. Create your tfvars file**
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your VPC ID, subnets, bucket names
+# Edit terraform.tfvars with your VPC ID, subnets, bucket names, domain
+```
+
+`terraform.tfvars` example:
+```hcl
+region         = "us-east-1"
+cluster_name   = "eks-test-cluster"
+domain_name    = "devopswithpraveen.online"
+loki_s3_bucket = "your-loki-bucket-name"
+vpc_id         = "vpc-xxxxxxxxxxxxxxxxx"
+subnet_ids     = ["subnet-xxxxxxxxxxxxxxxxx", "subnet-yyyyyyyyyyyyyyyyy"]
 ```
 
 **3. Initialize Terraform**
@@ -105,7 +129,7 @@ terraform plan
      ↓
 terraform apply
      ↓
-Outputs printed: cluster_name, loki_iam_role_arn, loki_s3_bucket
+Outputs exported to S3 state (read by eks-ansible config.yml)
 ```
 
 ### Required GitHub secrets
@@ -122,27 +146,34 @@ Go to **Settings → Secrets and variables → Actions** and add:
 
 ## Outputs
 
-After `terraform apply`, these values are available for the `eks-ansible` repo:
+After `terraform apply`, these values are stored in the S3 Terraform state and read automatically by `eks-ansible`:
 
 | Output | Description |
 |--------|-------------|
 | `cluster_name` | EKS cluster name |
 | `cluster_endpoint` | EKS API server URL |
-| `loki_iam_role_arn` | IAM role ARN for Loki IRSA |
-| `loki_s3_bucket` | S3 bucket name for Loki storage |
 | `kubeconfig_command` | Command to configure kubectl |
-| `oidc_provider_arn` | OIDC provider ARN |
+| `vpc_id` | VPC ID (passed to ALB controller) |
+| `oidc_provider_arn` | OIDC provider ARN (used for IRSA) |
+| `loki_iam_role_arn` | IAM role ARN for Loki → S3 access |
+| `loki_s3_bucket` | S3 bucket name for Loki log storage |
+| `acm_certificate_arn` | ACM wildcard cert ARN for HTTPS |
+| `alb_controller_iam_role_arn` | IAM role ARN for ALB controller |
+| `externaldns_iam_role_arn` | IAM role ARN for ExternalDNS |
+| `domain_name` | Base domain (devopswithpraveen.online) |
 
 ---
 
 ## How it connects to eks-ansible
 
 ```
-eks-infra (this repo)               eks-ansible
-─────────────────────               ───────────
+eks-infra (this repo)                      eks-ansible
+─────────────────────                      ───────────
 terraform apply
-  → creates EKS cluster    ──────→  aws eks update-kubeconfig
-  → creates IAM role ARN   ──────→  passed to Loki Helm values
-  → creates S3 bucket      ──────→  passed to Loki Helm values
-  → writes state to S3     ──────→  config.yml reads state directly
+  → EKS cluster + Spot nodes   ──────────→ aws eks update-kubeconfig
+  → ACM wildcard cert          ──────────→ Ingress TLS annotation
+  → ALB controller IRSA role   ──────────→ ALB controller Helm values
+  → ExternalDNS IRSA role      ──────────→ ExternalDNS Helm values
+  → Loki IRSA role + S3 bucket ──────────→ Loki Helm values
+  → writes outputs to S3 state ──────────→ config.yml reads state directly
 ```
