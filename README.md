@@ -136,11 +136,14 @@ Outputs exported to S3 state (read by eks-ansible config.yml)
 
 Go to **Settings → Secrets and variables → Actions** and add:
 
-| Secret | Description |
-|--------|-------------|
-| `AWS_ACCESS_KEY_ID` | AWS IAM user access key |
-| `AWS_SECRET_ACCESS_KEY` | AWS IAM user secret key |
-| `TF_STATE_BUCKET` | S3 bucket name for Terraform state |
+| Secret | Description | Example |
+|--------|-------------|---------|
+| `AWS_ACCESS_KEY_ID` | AWS IAM user access key | `AKIA...` |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM user secret key | |
+| `TF_STATE_BUCKET` | S3 bucket name for Terraform state | `my-tf-state-bucket` |
+| `TF_VAR_VPC_ID` | VPC ID where the cluster will be created | `vpc-0abc1234` |
+| `TF_VAR_SUBNET_IDS` | JSON array of subnet IDs (min 2, different AZs) | `["subnet-aaa","subnet-bbb"]` |
+| `TF_VAR_LOKI_S3_BUCKET` | S3 bucket name for Loki log storage | `my-loki-logs` |
 
 ---
 
