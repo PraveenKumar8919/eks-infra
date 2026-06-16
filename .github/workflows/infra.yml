@@ -1,9 +1,6 @@
 name: EKS Infrastructure
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 env:
