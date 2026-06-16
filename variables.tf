@@ -7,7 +7,7 @@ variable "cluster_name" {
 }
 
 variable "domain_name" {
-  description = "Root domain name managed in Route 53 (e.g. devopswithpraveen.online)"
+  description = "Root domain name managed in Route 53"
   default     = "devopswithpraveen.online"
 }
 
@@ -15,11 +15,8 @@ variable "loki_s3_bucket" {
   description = "S3 bucket name for Loki log storage"
 }
 
-variable "vpc_id" {
-  description = "VPC ID where the EKS cluster will be created"
-}
-
-variable "subnet_ids" {
-  description = "List of subnet IDs for the EKS cluster (minimum 2, different AZs)"
-  type        = list(string)
+variable "create_nat_gateway" {
+  description = "Create NAT gateway for private subnets. Set true when deploying EKS cluster."
+  type        = bool
+  default     = false
 }

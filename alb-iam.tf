@@ -40,18 +40,3 @@ resource "aws_iam_role_policy_attachment" "alb_controller" {
   role       = aws_iam_role.alb_controller.name
   policy_arn = aws_iam_policy.alb_controller.arn
 }
-
-# Subnets must be tagged so the ALB controller knows which ones to use
-resource "aws_ec2_tag" "subnet_elb" {
-  for_each    = toset(var.subnet_ids)
-  resource_id = each.value
-  key         = "kubernetes.io/role/elb"
-  value       = "1"
-}
-
-resource "aws_ec2_tag" "subnet_cluster" {
-  for_each    = toset(var.subnet_ids)
-  resource_id = each.value
-  key         = "kubernetes.io/cluster/${var.cluster_name}"
-  value       = "shared"
-}

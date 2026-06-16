@@ -9,14 +9,21 @@ Application and Helm deployments live in [eks-ansible](https://github.com/Pravee
 ## What this repo creates
 
 ```
-AWS
-├── EKS Cluster (Spot managed node group)   ← t3.xlarge/m5.xlarge Spot instances
+AWS (free — created any time)
+├── VPC  10.0.0.0/16
+│   ├── 3 public subnets  (10.0.1-3.0/24)   ← ALB lives here
+│   └── 3 private subnets (10.0.11-13.0/24) ← EKS nodes live here
+├── Internet Gateway
 ├── ACM Certificate                          ← wildcard *.devopswithpraveen.online
+└── S3 Bucket                               ← Loki log storage
+
+AWS (paid — created together with EKS)
+├── NAT Gateway                              ← lets private subnet nodes reach internet (~$1/day)
+├── EKS Cluster (Spot managed node group)   ← t3.xlarge/m5.xlarge Spot instances (~$0.10/hr)
 ├── ALB Controller IAM Role (IRSA)          ← lets ALB controller create load balancers
 ├── ExternalDNS IAM Role (IRSA)             ← lets ExternalDNS update Route 53 records
 ├── EBS CSI Driver IAM Role (IRSA)          ← lets EBS CSI driver create volumes
-├── Loki IAM Role (IRSA)                    ← lets Loki write logs to S3
-└── S3 Bucket                               ← Loki log storage
+└── Loki IAM Role (IRSA)                    ← lets Loki write logs to S3
 ```
 
 ### Why Spot instances?
@@ -49,6 +56,7 @@ eks-infra/
 │       └── security-scan.yml      # Trivy secret + IaC misconfiguration scan
 ├── policies/
 │   └── alb-controller-policy.json # Official ALB controller IAM policy
+├── vpc.tf                          # VPC with 3 public + 3 private subnets (NAT GW optional)
 ├── main.tf                         # EKS cluster + Spot node group + EBS CSI addon
 ├── provider.tf                     # AWS provider + S3 backend (no hardcoded bucket)
 ├── variables.tf                    # Input variables
@@ -81,12 +89,10 @@ cp terraform.tfvars.example terraform.tfvars
 
 `terraform.tfvars` example:
 ```hcl
-region         = "us-east-1"
-cluster_name   = "eks-test-cluster"
-domain_name    = "devopswithpraveen.online"
-loki_s3_bucket = "your-loki-bucket-name"
-vpc_id         = "vpc-xxxxxxxxxxxxxxxxx"
-subnet_ids     = ["subnet-xxxxxxxxxxxxxxxxx", "subnet-yyyyyyyyyyyyyyyyy"]
+region             = "us-east-1"
+cluster_name       = "eks-test-cluster"
+loki_s3_bucket     = "your-loki-bucket-name"
+create_nat_gateway = true   # set false to create only the VPC (free)
 ```
 
 **3. Initialize Terraform**
@@ -141,8 +147,6 @@ Go to **Settings → Secrets and variables → Actions** and add:
 | `AWS_ACCESS_KEY_ID` | AWS IAM user access key | `AKIA...` |
 | `AWS_SECRET_ACCESS_KEY` | AWS IAM user secret key | |
 | `TF_STATE_BUCKET` | S3 bucket name for Terraform state | `my-tf-state-bucket` |
-| `TF_VAR_VPC_ID` | VPC ID where the cluster will be created | `vpc-0abc1234` |
-| `TF_VAR_SUBNET_IDS` | JSON array of subnet IDs (min 2, different AZs) | `["subnet-aaa","subnet-bbb"]` |
 | `TF_VAR_LOKI_S3_BUCKET` | S3 bucket name for Loki log storage | `my-loki-logs` |
 
 ---

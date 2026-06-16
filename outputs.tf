@@ -11,7 +11,7 @@ output "kubeconfig_command" {
 }
 
 output "vpc_id" {
-  value = var.vpc_id
+  value = module.vpc.vpc_id
 }
 
 output "loki_iam_role_arn" {

@@ -4,9 +4,7 @@
 region         = "us-east-1"
 cluster_name   = "eks-test-cluster"
 loki_s3_bucket = "your-loki-storage-bucket-name"
-vpc_id         = "vpc-xxxxxxxxxxxxxxxxx"
-subnet_ids     = [
-  "subnet-xxxxxxxxxxxxxxxxx",
-  "subnet-xxxxxxxxxxxxxxxxx",
-  "subnet-xxxxxxxxxxxxxxxxx"
-]
+
+# Set to true when deploying the EKS cluster (creates NAT gateway for private subnets)
+# Set to false to create only the VPC structure (free)
+create_nat_gateway = true
