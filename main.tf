@@ -35,8 +35,7 @@ module "eks" {
     }
   }
 
-  cluster_addons = {
-    # Provides storage provisioner — required for Prometheus PersistentVolumeClaims
+  addons = {
     aws-ebs-csi-driver = {
       service_account_role_arn = aws_iam_role.ebs_csi.arn
       most_recent              = true
