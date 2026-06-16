@@ -10,7 +10,7 @@ env:
 
 jobs:
   terraform:
-    name: Terraform Plan & Apply
+    name: Terraform Plan
     runs-on: ubuntu-latest
 
     steps:
@@ -37,15 +37,4 @@ jobs:
             -backend-config="region=${{ env.AWS_REGION }}"
 
       - name: Terraform Plan
-        run: terraform plan -out=tfplan
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
-
-      - name: Print outputs
-        run: |
-          echo "=== Terraform Outputs ==="
-          echo "Cluster name:      $(terraform output -raw cluster_name)"
-          echo "Loki IAM role ARN: $(terraform output -raw loki_iam_role_arn)"
-          echo "Loki S3 bucket:    $(terraform output -raw loki_s3_bucket)"
-          echo "Kubeconfig cmd:    $(terraform output -raw kubeconfig_command)"
+        run: terraform plan
