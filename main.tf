@@ -13,13 +13,17 @@ module "eks" {
 
   eks_managed_node_groups = {
     spot = {
-      # Multiple instance types = more Spot capacity pools = fewer interruptions
-      # t3/t3a.xlarge: 4 vCPU 16GB  |  m5/m5a.xlarge: 4 vCPU 16GB
       instance_types = [
-        "t3.xlarge",
-        "t3a.xlarge",
-        "m5.xlarge",
-        "m5a.xlarge",
+        "t3.large",   # 2 vCPU  8 GB
+        "t3a.large",  # 2 vCPU  8 GB  AMD
+        "t3.xlarge",  # 4 vCPU 16 GB
+        "t3a.xlarge", # 4 vCPU 16 GB  AMD
+        "m5.large",   # 2 vCPU  8 GB
+        "m5a.large",  # 2 vCPU  8 GB  AMD
+        "m5.xlarge",  # 4 vCPU 16 GB
+        "m5a.xlarge", # 4 vCPU 16 GB  AMD
+        "m4.large",   # 2 vCPU  8 GB
+        "r5a.large",  # 2 vCPU 16 GB
       ]
 
       capacity_type = "SPOT"
@@ -27,6 +31,12 @@ module "eks" {
       min_size     = 2
       max_size     = 5
       desired_size = 2
+
+      timeouts = {
+        create = "20m"
+        update = "20m"
+        delete = "15m"
+      }
 
       labels = {
         role      = "spot-worker"
@@ -36,6 +46,20 @@ module "eks" {
   }
 
   addons = {
+    # before_compute = true installs these BEFORE any EC2 node launches.
+    # Without this, nodes come up with no CNI and stay NotReady forever.
+    vpc-cni = {
+      most_recent    = true
+      before_compute = true
+    }
+    kube-proxy = {
+      most_recent    = true
+      before_compute = true
+    }
+    coredns = {
+      most_recent    = true
+      before_compute = true
+    }
     aws-ebs-csi-driver = {
       service_account_role_arn = aws_iam_role.ebs_csi.arn
       most_recent              = true
