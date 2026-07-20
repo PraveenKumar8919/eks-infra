@@ -13,7 +13,31 @@ Tears down all paid infrastructure — EKS cluster, NAT gateway, node groups, IA
 3. Warn user: Route 53 records and ACM cert will be deleted. Grafana/Prometheus/Loki URLs will stop working.
 4. Ask for confirmation before proceeding.
 
-## Step 1 — Destroy everything
+## Step 1 — Delete ALBs created by the ALB controller (REQUIRED first)
+
+The ALB controller creates ALBs outside of Terraform (via Kubernetes Ingress objects). If these are not deleted before `terraform destroy`, the subnets will fail with `DependencyViolation` and the destroy will hang for hours.
+
+```bash
+# Delete all Kubernetes ingresses (triggers ALB controller to remove ALBs)
+kubectl delete ingress --all -A
+
+# Wait for ALBs to be fully removed
+until [ $(aws elbv2 describe-load-balancers --query 'length(LoadBalancers)' --output text) -eq 0 ]; do
+  echo "Waiting for ALBs to delete..."; sleep 10
+done
+echo "ALBs deleted — safe to proceed"
+```
+
+If `kubectl` is unavailable (kubeconfig expired), delete ALBs directly:
+```bash
+# List ALBs
+aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output table
+
+# Delete each one
+aws elbv2 delete-load-balancer --load-balancer-arn <arn>
+```
+
+## Step 2 — Destroy everything
 
 ```bash
 terraform destroy \
@@ -42,7 +66,7 @@ If Terraform state lock error appears after a failed/cancelled run:
 terraform force-unlock -force <lock-id>
 ```
 
-## Step 2 — Recreate VPC (free, ~2 minutes)
+## Step 3 — Recreate VPC (free, ~2 minutes)
 
 ```bash
 terraform apply \
@@ -52,7 +76,7 @@ terraform apply \
 
 Creates: VPC, 3 public subnets, 3 private subnets, Internet Gateway, route tables. No NAT gateway.
 
-## Step 3 — Verify
+## Step 4 — Verify
 
 ```bash
 # VPC should be back
@@ -68,7 +92,7 @@ aws ec2 describe-nat-gateways \
   --query "NatGateways[*].NatGatewayId" --output text --region us-east-1
 ```
 
-## Step 4 — Update CLAUDE.md state table
+## Step 5 — Update CLAUDE.md state table
 
 Update the infrastructure state table in `.claude/CLAUDE.md` to reflect:
 - VPC: Running (new VPC ID from Step 2 output)

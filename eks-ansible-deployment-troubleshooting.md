@@ -218,6 +218,52 @@ roboshop      catalogue, cart, user...  1/1   Running  (10 services)
 
 ---
 
+---
+
+## Issue 7 — Subnet `DependencyViolation` during `terraform destroy`
+
+**Symptom:**
+```
+Error: deleting EC2 Subnet (subnet-xxx): DependencyViolation: The subnet has dependencies and cannot be deleted.
+```
+`terraform destroy` hangs for hours then fails. Subnets cannot be deleted.
+
+**Root Cause:**
+The ALB controller creates ALBs in response to Kubernetes Ingress objects. These ALBs are **not managed by Terraform** — Terraform has no record of them and cannot delete them. When `terraform destroy` tries to remove the VPC subnets, AWS rejects it because the ALB's ENIs are still attached to those subnets.
+
+**Fix — always delete ALBs before `terraform destroy`:**
+
+```bash
+# Step 1: Delete all Kubernetes ingresses (ALB controller will remove the ALBs)
+kubectl delete ingress --all -A
+
+# Step 2: Wait for ALBs to be gone
+until [ $(aws elbv2 describe-load-balancers --query 'length(LoadBalancers)' --output text) -eq 0 ]; do
+  echo "Waiting for ALBs to delete..."; sleep 10
+done
+echo "ALBs deleted — safe to run terraform destroy"
+
+# Step 3: Now run terraform destroy
+terraform destroy -var="loki_s3_bucket=ppattirik-loki-logs" -var="create_nat_gateway=true"
+```
+
+If you already ran `terraform destroy` and it failed with DependencyViolation:
+```bash
+# Delete ALBs directly via AWS CLI
+aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output table
+aws elbv2 delete-load-balancer --load-balancer-arn <arn>
+
+# Force-unlock stale state lock (from the killed terraform process)
+terraform force-unlock -force <lock-id>
+
+# Re-run destroy
+terraform destroy -var="loki_s3_bucket=ppattirik-loki-logs" -var="create_nat_gateway=true"
+```
+
+> This fix has been added to the `/destroy-eks` skill — it now includes an ALB cleanup step before terraform destroy.
+
+---
+
 ## Commits Made Today
 
 | Repo | Commit | Fix |
