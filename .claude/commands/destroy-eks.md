@@ -28,13 +28,16 @@ done
 echo "ALBs deleted — safe to proceed"
 ```
 
-If `kubectl` is unavailable (kubeconfig expired), delete ALBs directly:
+If `kubectl` is unavailable (kubeconfig expired), delete ALBs and security groups directly:
 ```bash
-# List ALBs
+# List and delete ALBs
 aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output table
-
-# Delete each one
 aws elbv2 delete-load-balancer --load-balancer-arn <arn>
+
+# Also delete leftover k8s security groups (they block VPC deletion too)
+aws ec2 describe-security-groups --filters "Name=vpc-id,Values=<vpc-id>" \
+  --query 'SecurityGroups[?starts_with(GroupName, `k8s-`)].[GroupId,GroupName]' --output table
+aws ec2 delete-security-group --group-id <sg-id>
 ```
 
 ## Step 2 — Destroy everything
