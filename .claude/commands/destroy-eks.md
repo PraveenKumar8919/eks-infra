@@ -13,40 +13,35 @@ Tears down all paid infrastructure — EKS cluster, NAT gateway, node groups, IA
 3. Warn user: Route 53 records and ACM cert will be deleted. Grafana/Prometheus/Loki URLs will stop working.
 4. Ask for confirmation before proceeding.
 
-## Step 1 — Delete ALBs created by the ALB controller (REQUIRED first)
+## Step 1 — Destroy everything
 
-The ALB controller creates ALBs outside of Terraform (via Kubernetes Ingress objects). If these are not deleted before `terraform destroy`, the subnets will fail with `DependencyViolation` and the destroy will hang for hours.
-
-```bash
-# Delete all Kubernetes ingresses (triggers ALB controller to remove ALBs)
-kubectl delete ingress --all -A
-
-# Wait for ALBs to be fully removed
-until [ $(aws elbv2 describe-load-balancers --query 'length(LoadBalancers)' --output text) -eq 0 ]; do
-  echo "Waiting for ALBs to delete..."; sleep 10
-done
-echo "ALBs deleted — safe to proceed"
-```
-
-If `kubectl` is unavailable (kubeconfig expired), delete ALBs and security groups directly:
-```bash
-# List and delete ALBs
-aws elbv2 describe-load-balancers --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output table
-aws elbv2 delete-load-balancer --load-balancer-arn <arn>
-
-# Also delete leftover k8s security groups (they block VPC deletion too)
-aws ec2 describe-security-groups --filters "Name=vpc-id,Values=<vpc-id>" \
-  --query 'SecurityGroups[?starts_with(GroupName, `k8s-`)].[GroupId,GroupName]' --output table
-aws ec2 delete-security-group --group-id <sg-id>
-```
-
-## Step 2 — Destroy everything
+`cleanup.tf` contains a `null_resource` with a destroy-time provisioner that **automatically** deletes ALB-controller ALBs and security groups before the VPC is destroyed. No manual pre-steps needed.
 
 ```bash
 terraform destroy \
   -var="loki_s3_bucket=ppattirik-loki-logs" \
   -var="create_nat_gateway=true"
 ```
+
+The provisioner in `cleanup.tf` will run first and handle:
+- Deleting all Kubernetes ingresses (triggers ALB deletion)
+- Waiting for ALBs to be fully removed
+- Deleting leftover `k8s-*` security groups
+
+## If Step 1 fails (destroy-time provisioner didn't run or errored)
+
+Run `destroy.sh` as a last resort — it does all the cleanup manually then runs terraform destroy:
+
+```bash
+bash destroy.sh
+```
+
+What it handles:
+- Deletes ingresses via kubectl (falls back to direct AWS CLI if kubectl unavailable)
+- Waits for ALBs to delete
+- Deletes `k8s-*` security groups
+- Runs `terraform destroy`
+- Recreates free VPC
 
 This takes ~15 minutes. Destroys EKS, node groups, NAT gateway, IAM roles, ACM cert, S3 bucket, VPC.
 

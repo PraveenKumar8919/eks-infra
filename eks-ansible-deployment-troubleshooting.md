@@ -260,7 +260,7 @@ terraform force-unlock -force <lock-id>
 terraform destroy -var="loki_s3_bucket=ppattirik-loki-logs" -var="create_nat_gateway=true"
 ```
 
-> This fix has been added to the `/destroy-eks` skill — it now includes an ALB cleanup step before terraform destroy.
+> **Permanent fix:** `cleanup.tf` in eks-infra contains a `null_resource` with a destroy-time provisioner that runs this cleanup automatically — just run `terraform destroy` normally and it handles it. `destroy.sh` exists as a last resort if the provisioner fails.
 
 ---
 
