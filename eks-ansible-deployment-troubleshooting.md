@@ -109,7 +109,7 @@ kubectl get storageclass
 
 **Fix — two parts:**
 
-1. One-time cluster patch:
+1. One-time cluster patch (only needed if Loki was already deployed without the pre_task):
 ```bash
 kubectl patch storageclass gp2 -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 kubectl delete pvc storage-loki-0 -n loki-live   # delete stale unbound PVC
@@ -260,7 +260,9 @@ terraform force-unlock -force <lock-id>
 terraform destroy -var="loki_s3_bucket=ppattirik-loki-logs" -var="create_nat_gateway=true"
 ```
 
-> **Permanent fix:** `cleanup.tf` in eks-infra contains a `null_resource` with a destroy-time provisioner that runs this cleanup automatically — just run `terraform destroy` normally and it handles it. `destroy.sh` exists as a last resort if the provisioner fails.
+> **Permanent fix implemented:** `cleanup.tf` in eks-infra contains a `null_resource` with a `when = destroy` provisioner. It has `depends_on = [module.vpc, module.eks]` so it is destroyed FIRST (reverse dependency order), running the cleanup automatically before Terraform touches any subnets. Just run `terraform destroy` normally — no manual pre-steps needed.
+>
+> `destroy.sh` exists as a last resort if the provisioner fails — it does the full cleanup manually then runs terraform destroy and recreates the VPC.
 
 ---
 
