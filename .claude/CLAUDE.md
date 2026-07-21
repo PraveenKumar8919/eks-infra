@@ -25,13 +25,13 @@ Companion repo for Ansible/Helm deployments: https://github.com/PraveenKumar8919
 
 | Resource | State | Cost |
 |----------|-------|------|
-| VPC `vpc-06606998911fb7379` | **Running** | Free |
-| 3 public subnets 10.0.1-3.0/24 | **Running** | Free |
-| 3 private subnets 10.0.11-13.0/24 | **Running** | Free |
+| VPC `vpc-04945f5fb2d2e4b91` | **Running** | Free |
+| 3 public subnets | **Running** | Free |
+| 3 private subnets | **Running** | Free |
 | Internet Gateway | **Running** | Free |
-| NAT Gateway `nat-0cbc7e3ba68b29de5` | **Running** | ~$0.045/hr |
-| EKS cluster `eks-test-cluster` | **Running** | ~$0.10/hr |
-| Spot nodes (2x) | Deleting (failed) → will recreate | ~$0.10/hr when up |
+| NAT Gateway | Not created | — |
+| EKS cluster `eks-test-cluster` | Not created | — |
+| Spot nodes | Not created | — |
 
 **Update this table whenever infra state changes.**
 
@@ -65,7 +65,25 @@ terraform init \
 
 ---
 
-## Skills available
+## Agents available
 
-- `/deploy-eks` — brings up the full EKS stack end-to-end
-- `/destroy-eks` — tears down EKS + all paid resources, then recreates VPC
+Agents run autonomously end-to-end — spawn them when the user asks to deploy or destroy.
+
+| Agent | File | Trigger phrases | What it does |
+|-------|------|-----------------|--------------|
+| `eks-deploy` | `.claude/agents/eks-deploy.md` | "spin up the cluster", "deploy EKS", "create infra" | Terraform apply → wait for nodes Ready → trigger Ansible workflow → monitor → verify → report URLs |
+| `eks-destroy` | `.claude/agents/eks-destroy.md` | "destroy all infra", "tear down", "done practicing" | ALB/SG cleanup → terraform destroy → verify gone → recreate free VPC |
+
+## Skills available (step-by-step guidance)
+
+- `/deploy-eks` — guided deploy walkthrough
+- `/destroy-eks` — guided destroy walkthrough
+
+## Key files
+
+| File | Purpose |
+|------|---------|
+| `main.tf` | EKS cluster, node group, add-ons |
+| `cleanup.tf` | Destroy-time provisioner — auto-deletes ALBs + k8s SGs before VPC is removed |
+| `destroy.sh` | Last-resort manual destroy script if cleanup.tf provisioner fails |
+| `policies/alb-controller-policy.json` | ALB controller IAM policy (includes SetRulePriorities) |
