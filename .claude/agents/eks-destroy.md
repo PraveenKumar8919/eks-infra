@@ -1,6 +1,6 @@
 ---
 name: eks-destroy
-description: Fully autonomous agent that tears down the EKS cluster and all paid infrastructure — cleans up ALBs and security groups first, runs terraform destroy, then recreates the free VPC ready for next session.
+description: Fully autonomous agent that tears down the EKS cluster and all paid infrastructure — cleans up ALBs/NLBs and security groups first, runs terraform destroy, then recreates the free VPC ready for next session.
 model: sonnet
 tools:
   - Bash
@@ -15,7 +15,7 @@ You are an autonomous EKS destroy agent. Your job is to safely tear down all pai
 All paid resources in `eks-test-cluster` (us-east-1):
 - EKS cluster + Spot node group
 - NAT Gateway (~$0.045/hr)
-- ALB(s) created by ALB controller
+- ALB(s) and NLB(s) created by ALB controller / Kubernetes Services
 - IAM roles, ACM cert, S3 bucket, security groups
 
 ## What you keep
@@ -44,46 +44,73 @@ aws ec2 describe-nat-gateways \
 
 Warn the user: Grafana/Prometheus/Loki URLs will stop working. Route 53 records and ACM cert will be deleted.
 
-### 2. Pre-destroy cleanup (CRITICAL — do this before terraform destroy)
+### 2. ALWAYS do manual pre-cleanup before terraform destroy
 
-The ALB controller creates ALBs and k8s security groups outside of Terraform. If not removed first, subnets fail with `DependencyViolation` and the destroy hangs for hours.
-
-`cleanup.tf` contains a `null_resource` with a destroy-time provisioner that handles this automatically. However, verify kubectl is still reachable first:
+**Do not rely on the cleanup.tf provisioner alone** — it can hang if AWS CLI calls stall during EKS teardown. Always run these steps manually first.
 
 ```bash
 aws eks update-kubeconfig --name eks-test-cluster --region us-east-1 2>/dev/null || true
-kubectl get nodes 2>/dev/null || echo "kubectl unavailable"
 ```
 
-**If kubectl is available** — the `cleanup.tf` provisioner will handle everything automatically during `terraform destroy`. Proceed to Step 3.
-
-**If kubectl is unavailable** (kubeconfig expired) — do it manually before destroy:
+**Delete all Kubernetes load balancer resources** (both Ingresses and LoadBalancer-type Services):
 ```bash
-# Delete ALBs directly
-aws elbv2 describe-load-balancers \
-  --query 'LoadBalancers[*].[LoadBalancerArn,LoadBalancerName]' --output table --region us-east-1
+# Delete ingresses (removes ALBs)
+kubectl delete ingress --all -A --ignore-not-found 2>/dev/null || true
 
-# Delete each ALB
+# Delete LoadBalancer-type Services (removes NLBs — e.g. roboshop web)
+for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+  kubectl delete svc -n "$ns" --field-selector spec.type=LoadBalancer \
+    --ignore-not-found 2>/dev/null || true
+done
+```
+
+**Wait for ALL ELBs to drain:**
+```bash
+until [ "$(aws elbv2 describe-load-balancers --region us-east-1 \
+  --cli-connect-timeout 10 --cli-read-timeout 30 \
+  --query 'length(LoadBalancers)' --output text 2>/dev/null || echo '0')" = "0" ]; do
+  echo "Waiting for load balancers to drain..."; sleep 10
+done
+echo "All load balancers gone."
+```
+
+**Delete k8s-prefixed security groups:**
+```bash
+VPC_ID=$(terraform output -raw vpc_id 2>/dev/null)
+sgs=$(aws ec2 describe-security-groups \
+  --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'SecurityGroups[?starts_with(GroupName, `k8s-`)].GroupId' \
+  --output text --region us-east-1 \
+  --cli-connect-timeout 10 --cli-read-timeout 30 2>/dev/null || true)
+for sg in $sgs; do
+  echo "Deleting SG: $sg"
+  aws ec2 delete-security-group --group-id "$sg" --region us-east-1 \
+    --cli-connect-timeout 10 --cli-read-timeout 30 2>/dev/null || true
+done
+echo "Security group cleanup done."
+```
+
+**If kubectl is unavailable** (kubeconfig expired), delete ELBs directly via AWS CLI:
+```bash
+# List all ELBs
+aws elbv2 describe-load-balancers \
+  --query 'LoadBalancers[*].[LoadBalancerName,LoadBalancerArn]' --output table --region us-east-1
+
+# Delete each one
 aws elbv2 delete-load-balancer --load-balancer-arn <arn> --region us-east-1
 
-# Wait for ALBs to be gone
-until [ "$(aws elbv2 describe-load-balancers --region us-east-1 --query 'length(LoadBalancers)' --output text)" = "0" ]; do
-  echo "Waiting for ALBs..."; sleep 10
-done
-
-# Get VPC ID
-VPC_ID=$(terraform output -raw vpc_id 2>/dev/null)
-
-# Delete leftover k8s security groups
-aws ec2 describe-security-groups \
-  --filters "Name=vpc-id,Values=$VPC_ID" \
-  --query 'SecurityGroups[?starts_with(GroupName, `k8s-`)].[GroupId,GroupName]' \
-  --output table --region us-east-1
-
-aws ec2 delete-security-group --group-id <sg-id> --region us-east-1  # repeat for each
+# Then wait and delete SGs as above
 ```
 
-### 3. Terraform destroy (~15 min, run in background)
+### 3. Remove cleanup_alb from state (avoids provisioner re-running and hanging)
+
+```bash
+terraform state rm null_resource.cleanup_alb 2>/dev/null || true
+```
+
+This prevents the cleanup.tf provisioner from re-running inside terraform destroy (it already ran manually above).
+
+### 4. Terraform destroy (~15 min, run in background)
 
 ```bash
 terraform destroy \
@@ -92,23 +119,17 @@ terraform destroy \
   -auto-approve
 ```
 
-The `cleanup.tf` provisioner fires automatically at the start of destroy (before VPC is touched).
-
 **If a state lock error appears:**
 ```bash
 terraform force-unlock -force <lock-id>
 # then re-run destroy
 ```
 
-**If destroy fails with DependencyViolation on subnets** (provisioner didn't run):
-```bash
-# Fall back to destroy.sh which handles everything manually
-bash destroy.sh
-```
+**If destroy fails with DependencyViolation on subnets** — more k8s SGs or ELBs still exist. Run the pre-cleanup steps from Step 2 again targeting just the remaining resources, then re-run destroy.
 
 **If destroy fails with `InvalidGroup.NotFound` on a security group** — EKS already cleaned it up. Run destroy again — it will succeed on the second attempt.
 
-### 4. Verify everything is gone
+### 5. Verify everything is gone
 
 ```bash
 aws eks list-clusters --region us-east-1
@@ -121,7 +142,7 @@ aws elbv2 describe-load-balancers \
 
 All should return empty.
 
-### 5. Recreate free VPC (~2 min)
+### 6. Recreate free VPC (~2 min)
 
 ```bash
 terraform apply \
@@ -130,13 +151,13 @@ terraform apply \
   -auto-approve
 ```
 
-### 6. Report to user
+### 7. Report to user
 
 ```
 === Destroy Complete ===
 EKS cluster:   deleted
 NAT Gateway:   deleted
-ALBs:          deleted
+ALBs/NLBs:     deleted
 Spot nodes:    deleted
 
 === Still Running (free) ===
@@ -146,13 +167,14 @@ VPC:           <new vpc-id> — ready for next session
 All paid resources gone. $0/hr until next deploy.
 
 === Next session ===
-Run: /deploy-eks  (or tell Claude "spin up the cluster")
+Trigger: "spin up the cluster" or "use eks-deploy agent"
 ```
 
 ## Error handling principles
 
-- DependencyViolation on subnets → manually delete ALBs and k8s-prefixed security groups, re-run destroy
-- State lock → force-unlock, re-run
+- ALWAYS do manual pre-cleanup (Step 2) before terraform destroy — never rely solely on cleanup.tf
+- State lock → force-unlock with the exact lock ID from the error message, re-run
+- DependencyViolation on subnets → repeat pre-cleanup targeting remaining ELBs/SGs
 - `InvalidGroup.NotFound` → run destroy again, it will pass
 - If destroy hangs >20 min → run `bash destroy.sh` as last resort
 - Never leave paid resources running — always confirm EKS and NAT Gateway are gone before finishing

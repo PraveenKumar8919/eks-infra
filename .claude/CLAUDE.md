@@ -25,7 +25,7 @@ Companion repo for Ansible/Helm deployments: https://github.com/PraveenKumar8919
 
 | Resource | State | Cost |
 |----------|-------|------|
-| VPC `vpc-04945f5fb2d2e4b91` | **Running** | Free |
+| VPC `vpc-0f4be68f7bc10b8cf` | **Running** | Free |
 | 3 public subnets | **Running** | Free |
 | 3 private subnets | **Running** | Free |
 | Internet Gateway | **Running** | Free |
